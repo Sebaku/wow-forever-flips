@@ -1,0 +1,11 @@
+Data from ForeverDB.net (https://foreverdb.net).
+
+Recipe and item data in data/crafts.json is derived from ForeverDB's addon data
+(Data/Recipes.lua, Data/Items.lua, Data/Meta.lua) and is reused under GPL-3.0
+with ForeverDB.net's attribution term (GPL-3.0 section 7(b)). The credit
+"Data from ForeverDB.net" with a link to https://foreverdb.net is shown in the
+application footer and in README.md.
+
+Client tables are sourced from wago.tools. Auction house prices are from
+TradeSkillMaster public data. World of Warcraft is a trademark of Blizzard
+Entertainment; this project is not affiliated with Blizzard Entertainment.
