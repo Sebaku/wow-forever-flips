@@ -2,8 +2,8 @@
 
 import { Fragment, useMemo, useState } from "react";
 
-import { formatCompactMoney, formatDuration, formatMoney } from "@/lib/money";
-import type { FlipRow } from "@/lib/types";
+import { formatCompactMoney, formatDuration, formatMoney, formatQty } from "@/lib/money";
+import type { AnalyzeMode, FlipRow, ReagentCost } from "@/lib/types";
 
 type SortKey = "profitPerHour" | "profit" | "vendorValue" | "reagentCost" | "seconds";
 
@@ -29,6 +29,21 @@ function ClassicMark() {
       ~
     </span>
   );
+}
+
+function hasClassicSource(reagent: ReagentCost): boolean {
+  return reagent.src === "classic" || reagent.children.some(hasClassicSource);
+}
+
+type FlatReagent = { reagent: ReagentCost; depth: number };
+
+function flattenReagents(nodes: ReagentCost[], depth = 0): FlatReagent[] {
+  const flat: FlatReagent[] = [];
+  for (const node of nodes) {
+    flat.push({ reagent: node, depth });
+    if (node.children.length) flat.push(...flattenReagents(node.children, depth + 1));
+  }
+  return flat;
 }
 
 function SortHeader({
@@ -60,7 +75,15 @@ function SortHeader({
   );
 }
 
-export function CraftsTable({ rows, professions }: { rows: FlipRow[]; professions: string[] }) {
+export function CraftsTable({
+  rows,
+  professions,
+  mode,
+}: {
+  rows: FlipRow[];
+  professions: string[];
+  mode: AnalyzeMode;
+}) {
   const [profession, setProfession] = useState("all");
   const [query, setQuery] = useState("");
   const [hideUnprofitable, setHideUnprofitable] = useState(true);
@@ -75,7 +98,7 @@ export function CraftsTable({ rows, professions }: { rows: FlipRow[]; profession
     const list = rows.filter((row) => {
       if (profession !== "all" && row.prof !== profession) return false;
       if (hideUnprofitable && row.profit <= 0) return false;
-      if (hideEstimated && (row.outSrc === "classic" || row.reagents.some((reagent) => reagent.src === "classic"))) return false;
+      if (hideEstimated && (row.outSrc === "classic" || row.reagents.some(hasClassicSource))) return false;
       if (!needle) return true;
       return row.name.toLowerCase().includes(needle) || row.outName.toLowerCase().includes(needle);
     });
@@ -182,20 +205,47 @@ export function CraftsTable({ rows, professions }: { rows: FlipRow[]; profession
                       <div className="mt-0.5 flex items-center gap-2 text-xs text-zinc-500">
                         <span className="rounded bg-zinc-800 px-1.5 py-0.5 text-zinc-300">{row.prof}</span>
                         <span>skill {row.skill}</span>
+                        {row.crafted && (
+                          <span
+                            className="rounded bg-emerald-500/10 px-1.5 py-0.5 text-emerald-300"
+                            title="Some reagents are crafted first; the time column includes those sub-crafts"
+                          >
+                            craft
+                          </span>
+                        )}
+                        {mode === "craft" && row.profit > 0 && (row.altProfit ?? row.profit) <= 0 && (
+                          <span
+                            className="rounded bg-emerald-500/10 px-1.5 py-0.5 text-emerald-300"
+                            title="Loses money with bought reagents; profitable only when you craft the intermediates"
+                          >
+                            self-craft only
+                          </span>
+                        )}
+                        {mode === "buy" && row.profit <= 0 && (row.altProfit ?? row.profit) > 0 && (
+                          <span
+                            className="rounded bg-emerald-500/10 px-1.5 py-0.5 text-emerald-300"
+                            title="Buying these reagents loses money, but crafting the intermediates makes it profitable"
+                          >
+                            self-craft +{formatCompactMoney(row.altProfitPerHour ?? 0)}/h
+                          </span>
+                        )}
                       </div>
                     </td>
                     <td className="px-3 py-2">
                       <span className={QUALITY[row.quality] ?? QUALITY[1]}>{row.outName}</span>
                       {row.outSrc === "classic" && <ClassicMark />}
                       <span className="ml-1 text-xs text-zinc-500">
-                        ×{row.qty % 1 === 0 ? row.qty : row.qty.toFixed(2)}
+                        ×{formatQty(row.qty)}
                         {row.min !== undefined ? ` (${row.min}–${row.max})` : ""}
                       </span>
                     </td>
                     <td className="px-3 py-2 text-right tabular-nums text-zinc-300">{formatMoney(row.vendorValue)}</td>
                     <td className="px-3 py-2 text-right tabular-nums text-zinc-400">{formatMoney(row.reagentCost)}</td>
                     <td className={`px-3 py-2 text-right tabular-nums font-medium ${profitColor(row.profit)}`}>{formatMoney(row.profit)}</td>
-                    <td className="px-3 py-2 text-right tabular-nums text-zinc-400">
+                    <td
+                      className="px-3 py-2 text-right tabular-nums text-zinc-400"
+                      title={row.crafted ? "Includes the time spent crafting intermediate reagents" : undefined}
+                    >
                       {formatDuration(row.seconds)}
                       {row.cooldownBound && <span className="ml-1 rounded bg-amber-500/15 px-1 py-0.5 text-[10px] text-amber-300">cd</span>}
                     </td>
@@ -218,23 +268,45 @@ export function CraftsTable({ rows, professions }: { rows: FlipRow[]; profession
                                     <th className="px-2 py-1.5 text-right font-medium">AH</th>
                                     <th className="px-2 py-1.5 text-right font-medium">Vendor</th>
                                     <th className="px-2 py-1.5 text-right font-medium">Used</th>
+                                    <th className="px-2 py-1.5 text-right font-medium">Time</th>
                                     <th className="px-2 py-1.5 text-right font-medium">Cost</th>
                                   </tr>
                                 </thead>
                                 <tbody className="divide-y divide-zinc-800/70">
-                                  {row.reagents.map((reagent) => (
-                                    <tr key={reagent.id}>
-                                      <td className="px-2 py-1.5 text-zinc-200">
-                                        {reagent.name}
+                                  {flattenReagents(row.reagents).map(({ reagent, depth }, index) => (
+                                    <tr key={`${reagent.id}-${depth}-${index}`} className={depth ? "bg-zinc-950/30" : undefined}>
+                                      <td
+                                        className="px-2 py-1.5 text-zinc-200"
+                                        title={
+                                          reagent.recipe
+                                            ? `Crafted: ${reagent.recipe.name} (${formatQty(reagent.recipe.qty)} per craft)`
+                                            : undefined
+                                        }
+                                      >
+                                        <span style={{ paddingLeft: depth * 14 }} className="inline-block">
+                                          {depth > 0 && <span className="mr-1 text-zinc-600">↳</span>}
+                                          {reagent.name}
+                                        </span>
                                         {reagent.src === "classic" && <ClassicMark />}
                                       </td>
-                                      <td className="px-2 py-1.5 text-right tabular-nums text-zinc-400">{reagent.count}</td>
+                                      <td className="px-2 py-1.5 text-right tabular-nums text-zinc-400">{formatQty(reagent.count)}</td>
                                       <td className="px-2 py-1.5 text-right tabular-nums text-zinc-500">{reagent.ah === null ? "—" : formatMoney(reagent.ah)}</td>
                                       <td className="px-2 py-1.5 text-right tabular-nums text-zinc-500">{reagent.vendor === null ? "—" : formatMoney(reagent.vendor)}</td>
                                       <td className="px-2 py-1.5 text-right tabular-nums">
-                                        <span className={reagent.source === "ah" ? "text-sky-300" : "text-amber-300"}>
-                                          {reagent.source === "ah" ? "AH" : "Vendor"}
+                                        <span
+                                          className={
+                                            reagent.source === "ah"
+                                              ? "text-sky-300"
+                                              : reagent.source === "vendor"
+                                                ? "text-amber-300"
+                                                : "text-emerald-300"
+                                          }
+                                        >
+                                          {reagent.source === "ah" ? "AH" : reagent.source === "vendor" ? "Vendor" : "Craft"}
                                         </span>
+                                      </td>
+                                      <td className="px-2 py-1.5 text-right tabular-nums text-zinc-500">
+                                        {reagent.time > 0 ? formatDuration(reagent.time) : "—"}
                                       </td>
                                       <td className="px-2 py-1.5 text-right tabular-nums text-zinc-300">{formatMoney(reagent.line)}</td>
                                     </tr>
@@ -253,6 +325,10 @@ export function CraftsTable({ rows, professions }: { rows: FlipRow[]; profession
                               </p>
                               <p className="mt-1">
                                 Time {formatDuration(row.seconds)}
+                                {" · final craft "}
+                                {formatDuration(Math.max(row.castMs, row.cdMs, 1500) / 1000)}
+                                {row.seconds > Math.max(row.castMs, row.cdMs, 1500) / 1000 + 0.05 &&
+                                  ` · sub-crafts ${formatDuration(row.seconds - Math.max(row.castMs, row.cdMs, 1500) / 1000)}`}
                                 {row.castMs > 0 && ` · cast ${formatDuration(row.castMs / 1000)}`}
                                 {row.cdMs > 0 && ` · cooldown ${formatDuration(row.cdMs / 1000)}`}
                                 {" · min 1.5s per craft"}
@@ -260,9 +336,20 @@ export function CraftsTable({ rows, professions }: { rows: FlipRow[]; profession
                               <p className="mt-1">
                                 Profit per hour = <span className={profitColor(row.profitPerHour)}>{formatMoney(row.profitPerHour)}</span>
                               </p>
+                              {row.altProfitPerHour !== undefined && (
+                                <p className="mt-1">
+                                  {mode === "craft" ? "Buying all mats instead" : "Self-crafting the mats instead"}: cost{" "}
+                                  {formatMoney(row.altReagentCost ?? 0)} → profit{" "}
+                                  <span className={profitColor(row.altProfit ?? 0)}>{formatMoney(row.altProfit ?? 0)}</span> →{" "}
+                                  <span className={profitColor(row.altProfitPerHour)}>{formatCompactMoney(row.altProfitPerHour)}</span>
+                                  /hour ({formatDuration(row.altSeconds ?? 0)}).
+                                </p>
+                              )}
                             </div>
                             <p className="rounded-lg border border-zinc-800 bg-zinc-950/60 p-2 text-[11px] leading-relaxed text-zinc-500">
-                              Reagent unit cost is the EU market value (or historical value). The vendor price is used only when the item has no auction data and an NPC actually sells it. Cooldown-bound crafts assume one craft per cooldown.
+                              {mode === "craft"
+                                ? "Intermediates are crafted with their cheapest known recipe and their cast times and cooldowns are added to the total. Assumes those recipes are learned and craftable by the character. Reagents with no recipe are bought at the auction house (or from a verified vendor)."
+                                : "Reagent unit cost is the EU market value (or historical value). The vendor price is used only when the item has no auction data and an NPC actually sells it. Cooldown-bound crafts assume one craft per cooldown."}
                             </p>
                           </div>
                         </div>
@@ -304,7 +391,7 @@ export function CraftsTable({ rows, professions }: { rows: FlipRow[]; profession
         )}
       </div>
 
-      {rows.some((row) => row.outSrc === "classic" || row.reagents.some((reagent) => reagent.src === "classic")) && (
+      {rows.some((row) => row.outSrc === "classic" || row.reagents.some(hasClassicSource)) && (
         <p className="border-t border-zinc-800 px-4 py-2 text-[11px] text-zinc-500">
           <span className="font-semibold text-amber-400/90">~</span> Vendor price from Classic Era client data — the item is missing from the Forever ItemSparse export.
         </p>

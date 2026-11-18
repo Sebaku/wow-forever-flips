@@ -1,5 +1,7 @@
 export type ItemSource = "forever" | "classic" | "api" | "name-only";
 
+export type AnalyzeMode = "buy" | "craft";
+
 export type CraftsItem = {
   name: string;
   sell: number;
@@ -7,6 +9,7 @@ export type CraftsItem = {
   quality: number;
   src: ItemSource;
   vendor: boolean;
+  bound: boolean;
 };
 
 export type CraftsRecipe = {
@@ -55,8 +58,19 @@ export type ReagentCost = {
   vendor: number | null;
   unit: number;
   line: number;
-  source: "ah" | "vendor";
+  time: number;
+  source: "ah" | "vendor" | "craft";
   src: ItemSource;
+  recipe?: {
+    id: number;
+    name: string;
+    qty: number;
+    castMs: number;
+    cdMs: number;
+    min?: number;
+    max?: number;
+  };
+  children: ReagentCost[];
 };
 
 export type FlipRow = {
@@ -79,11 +93,17 @@ export type FlipRow = {
   castMs: number;
   cdMs: number;
   cooldownBound: boolean;
+  crafted: boolean;
+  altReagentCost?: number;
+  altProfit?: number;
+  altProfitPerHour?: number;
+  altSeconds?: number;
   reagents: ReagentCost[];
 };
 
 export type Analysis = {
   rows: FlipRow[];
+  mode: AnalyzeMode;
   totalRecipes: number;
   excludedMissingPrice: number;
   priceUpdatedAt: string | null;

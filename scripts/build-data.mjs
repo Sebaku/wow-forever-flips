@@ -532,6 +532,8 @@ const stats = {
   emptyReagents: 0,
   missingReagentItem: 0,
   boundReagent: 0,
+  boundReagentRecipes: 0,
+  graphRecipes: 0,
   kept: 0,
   classicFallbackOutputs: 0,
   classicFallbackReagents: 0,
@@ -574,41 +576,8 @@ for (const profession of PROFESSION_ORDER) {
       stats.noOutput++;
       continue;
     }
-    const item = lookupItem(outId);
-    if (!item) {
-      stats.missingOutputItem++;
-      missingOutputIds.add(outId);
-      continue;
-    }
-    if (item.sell <= 0) {
-      stats.noVendorValue++;
-      noVendorIds.add(outId);
-      continue;
-    }
     if (!reagents.length) {
       stats.emptyReagents++;
-      continue;
-    }
-
-    let missing = false;
-    let bound = false;
-    for (const [reagentId] of reagents) {
-      const reagent = lookupItem(reagentId);
-      if (!reagent) {
-        stats.missingReagentItem++;
-        missingReagentIds.add(reagentId);
-        missing = true;
-        break;
-      }
-      if (reagent.src === 'classic') stats.classicFallbackReagents++;
-      if (reagent.bonding === 1 && !reagent.vendor) {
-        bound = true;
-        boundIds.add(reagentId);
-      }
-    }
-    if (missing) continue;
-    if (bound) {
-      stats.boundReagent++;
       continue;
     }
 
@@ -618,7 +587,37 @@ for (const profession of PROFESSION_ORDER) {
       continue;
     }
     if (maxQty > minQty) stats.randomCountRecipes++;
-    if (item.src === 'classic') stats.classicFallbackOutputs++;
+
+    const item = lookupItem(outId);
+    if (!item) {
+      stats.missingOutputItem++;
+      missingOutputIds.add(outId);
+    } else {
+      if (item.src === 'classic') stats.classicFallbackOutputs++;
+      if (item.sell <= 0) {
+        stats.noVendorValue++;
+        noVendorIds.add(outId);
+      } else {
+        stats.kept++;
+      }
+    }
+
+    let recipeBound = false;
+    for (const [reagentId] of reagents) {
+      const reagent = lookupItem(reagentId);
+      if (!reagent) {
+        stats.missingReagentItem++;
+        missingReagentIds.add(reagentId);
+        continue;
+      }
+      if (reagent.src === 'classic') stats.classicFallbackReagents++;
+      if (reagent.bonding === 1 && !reagent.vendor) {
+        stats.boundReagent++;
+        boundIds.add(reagentId);
+        recipeBound = true;
+      }
+    }
+    if (recipeBound) stats.boundReagentRecipes++;
 
     const misc = spellMisc.get(spellId);
     const castMs = misc ? Math.max(0, castTimes.get(num(misc.CastingTimeIndex)) ?? 0) : 0;
@@ -643,25 +642,22 @@ for (const profession of PROFESSION_ORDER) {
     usedItemIds.add(outId);
     for (const [reagentId] of reagents) usedItemIds.add(reagentId);
     perProfession[profession]++;
-    stats.kept++;
   }
 }
+
+stats.graphRecipes = recipes.length;
 
 const items = {};
 for (const id of usedItemIds) {
   const item = lookupItem(id);
-  if (!item) {
-    const name = names[id];
-    if (name) items[id] = { name, sell: 0, buy: 0, quality: 0, src: 'name-only', vendor: false };
-    continue;
-  }
   items[id] = {
-    name: item.name || names[id] || String(id),
-    sell: item.sell,
-    buy: item.buy,
-    quality: item.quality,
-    src: item.src,
-    vendor: item.vendor,
+    name: item?.name || names[id] || `Item ${id}`,
+    sell: item?.sell ?? 0,
+    buy: item?.buy ?? 0,
+    quality: item?.quality ?? 0,
+    src: item?.src ?? 'name-only',
+    vendor: item?.vendor ?? false,
+    bound: item?.bonding === 1,
   };
 }
 
@@ -689,6 +685,7 @@ const payload = {
     missingReagentItems: missingReagentIds.size,
     itemsWithoutVendorValue: noVendorIds.size,
     boundReagentItems: boundIds.size,
+    intermediateRecipes: stats.graphRecipes - stats.kept,
   },
 };
 
@@ -696,11 +693,11 @@ mkdirFor(OUT_FILE);
 fs.writeFileSync(OUT_FILE, JSON.stringify(payload));
 
 console.log('\nStats:', payload.stats);
-console.log(`Recipes kept: ${recipes.length}, unique items: ${Object.keys(items).length}`);
+console.log(`Recipes in graph: ${recipes.length} (${stats.kept} sellable), unique items: ${Object.keys(items).length}`);
 for (const p of professions) console.log(`  ${p.name}: ${p.recipes}`);
 console.log(`Wrote ${OUT_FILE} (${(fs.statSync(OUT_FILE).size / 1024).toFixed(0)} KB)`);
 
 if (missingOutputIds.size) {
   const named = [...missingOutputIds].slice(0, 25).map((id) => `${id}${names[id] ? ` ${names[id]}` : ''}`);
-  console.log('Recipes excluded, output item unknown:', named.join(' | '));
+  console.log('Recipe outputs missing from item price data:', named.join(' | '));
 }

@@ -25,6 +25,11 @@ export function formatCompactMoney(copper: number): string {
   return formatMoney(copper);
 }
 
+export function formatQty(value: number): string {
+  if (Math.abs(value - Math.round(value)) < 0.005) return String(Math.round(value));
+  return value.toFixed(2).replace(/\.?0+$/, "");
+}
+
 export function formatDuration(seconds: number): string {
   if (seconds < 60) return `${seconds % 1 === 0 ? seconds : seconds.toFixed(1)}s`;
   if (seconds < 3600) {

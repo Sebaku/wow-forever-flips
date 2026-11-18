@@ -1,8 +1,36 @@
-import type { Analysis, CraftsData, FlipRow, Prices, ReagentCost } from "./types";
+import type {
+  Analysis,
+  AnalyzeMode,
+  CraftsData,
+  CraftsRecipe,
+  FlipRow,
+  Prices,
+  ReagentCost,
+} from "./types";
 
 const MIN_CRAFT_SECONDS = 1.5;
 
-export function analyze(data: CraftsData, prices: Prices): Analysis {
+type ResolvedLine = {
+  id: number;
+  count: number;
+  resolved: Resolved;
+};
+
+type Resolved = {
+  unitCost: number;
+  unitTime: number;
+  source: "ah" | "vendor" | "craft";
+  ah: number | null;
+  vendor: number | null;
+  recipe?: CraftsRecipe;
+  children: ResolvedLine[];
+};
+
+function craftSeconds(recipe: CraftsRecipe): number {
+  return Math.max(recipe.castMs, recipe.cdMs, MIN_CRAFT_SECONDS * 1000) / 1000;
+}
+
+export function analyze(data: CraftsData, prices: Prices, mode: AnalyzeMode = "buy"): Analysis {
   const rows: FlipRow[] = [];
   let excludedMissingPrice = 0;
   let priceUpdatedAt: string | null = null;
@@ -11,38 +39,138 @@ export function analyze(data: CraftsData, prices: Prices): Analysis {
     if (updated.updated && (!priceUpdatedAt || updated.updated > priceUpdatedAt)) priceUpdatedAt = updated.updated;
   }
 
+  const byOutput = new Map<number, CraftsRecipe[]>();
+  for (const recipe of data.recipes) {
+    const list = byOutput.get(recipe.out);
+    if (list) list.push(recipe);
+    else byOutput.set(recipe.out, [recipe]);
+  }
+
+  const memo = new Map<number, Resolved | null>();
+  const stack = new Set<number>();
+
+  function resolve(id: number): Resolved | null {
+    const cached = memo.get(id);
+    if (cached !== undefined) return cached;
+
+    const item = data.items[id];
+    const price = prices[id];
+    const bound = item?.bound ?? false;
+    const ah = bound ? null : price ? (price.market > 0 ? price.market : price.historical > 0 ? price.historical : null) : null;
+    const vendor = item?.vendor && item.buy > 0 ? item.buy : null;
+
+    const buy = (): Resolved | null =>
+      ah === null && vendor === null
+        ? null
+        : {
+            unitCost: ah ?? vendor!,
+            unitTime: 0,
+            source: ah !== null ? "ah" : "vendor",
+            ah,
+            vendor,
+            children: [],
+          };
+
+    if (mode === "buy" || stack.has(id)) {
+      const result = buy();
+      if (!stack.has(id)) memo.set(id, result);
+      return result;
+    }
+
+    const bought = buy();
+    let best: Resolved | null = null;
+    stack.add(id);
+    for (const recipe of byOutput.get(id) ?? []) {
+      if (!(recipe.qty > 0)) continue;
+      let cost = 0;
+      let time = craftSeconds(recipe);
+      const children: ResolvedLine[] = [];
+      let ok = true;
+      for (const [reagentId, count] of recipe.reagents) {
+        const child = resolve(reagentId);
+        if (!child) {
+          ok = false;
+          break;
+        }
+        cost += child.unitCost * count;
+        time += child.unitTime * count;
+        children.push({ id: reagentId, count, resolved: child });
+      }
+      if (!ok) continue;
+      const unitCost = cost / recipe.qty;
+      const unitTime = time / recipe.qty;
+      if (!best || unitCost < best.unitCost || (unitCost === best.unitCost && unitTime < best.unitTime)) {
+        best = { unitCost, unitTime, source: "craft", ah, vendor, recipe, children };
+      }
+    }
+    stack.delete(id);
+
+    const result =
+      best && (!bought || best.unitCost < bought.unitCost || (best.unitCost === bought.unitCost && best.unitTime < bought.unitTime))
+        ? best
+        : bought ?? best;
+    memo.set(id, result);
+    return result;
+  }
+
+  function buildNode(id: number, count: number, resolved: Resolved): ReagentCost {
+    const item = data.items[id];
+    const recipe = resolved.recipe;
+    const crafts = recipe && resolved.source === "craft" ? count / recipe.qty : 0;
+    return {
+      id,
+      name: item?.name ?? `Item ${id}`,
+      count,
+      ah: resolved.ah,
+      vendor: resolved.vendor,
+      unit: resolved.unitCost,
+      line: resolved.unitCost * count,
+      time: resolved.unitTime * count,
+      source: resolved.source,
+      src: item?.src ?? "name-only",
+      recipe: recipe
+        ? {
+            id: recipe.id,
+            name: recipe.name,
+            qty: recipe.qty,
+            castMs: recipe.castMs,
+            cdMs: recipe.cdMs,
+            min: recipe.min,
+            max: recipe.max,
+          }
+        : undefined,
+      children: recipe
+        ? resolved.children.map((child) => buildNode(child.id, child.count * crafts, child.resolved))
+        : [],
+    };
+  }
+
   for (const recipe of data.recipes) {
     const output = data.items[recipe.out];
     if (!output || output.sell <= 0) continue;
 
     const reagents: ReagentCost[] = [];
     let reagentCost = 0;
+    let reagentTime = 0;
+    let crafted = false;
     let missingPrice = false;
 
     for (const [id, count] of recipe.reagents) {
       const item = data.items[id];
-      const price = prices[id];
-      const ah = price ? (price.market > 0 ? price.market : price.historical > 0 ? price.historical : null) : null;
-      const vendor = item?.vendor && item.buy > 0 ? item.buy : null;
-      if (ah === null && vendor === null) {
+      const resolved = resolve(id);
+      if (!resolved) {
         missingPrice = true;
         break;
       }
-      const useVendor = ah === null;
-      const unit = ah ?? vendor!;
-      const line = unit * count;
-      reagentCost += line;
-      reagents.push({
-        id,
-        name: item?.name ?? `Item ${id}`,
-        count,
-        ah,
-        vendor,
-        unit,
-        line,
-        source: useVendor ? "vendor" : "ah",
-        src: item?.src ?? "name-only",
-      });
+      if (item?.bound && resolved.source === "ah") {
+        missingPrice = true;
+        break;
+      }
+      const node = buildNode(id, count, resolved);
+      reagentCost += node.line;
+      reagentTime += node.time;
+      reagents.push(node);
+      if (resolved.source === "craft") crafted = true;
     }
 
     if (missingPrice) {
@@ -52,7 +180,7 @@ export function analyze(data: CraftsData, prices: Prices): Analysis {
 
     const vendorValue = output.sell * recipe.qty;
     const profit = vendorValue - reagentCost;
-    const seconds = Math.max(recipe.castMs, recipe.cdMs, MIN_CRAFT_SECONDS * 1000) / 1000;
+    const seconds = craftSeconds(recipe) + reagentTime;
 
     rows.push({
       recipeId: recipe.id,
@@ -74,6 +202,7 @@ export function analyze(data: CraftsData, prices: Prices): Analysis {
       castMs: recipe.castMs,
       cdMs: recipe.cdMs,
       cooldownBound: recipe.cdMs > recipe.castMs,
+      crafted,
       reagents,
     });
   }
@@ -82,6 +211,7 @@ export function analyze(data: CraftsData, prices: Prices): Analysis {
 
   return {
     rows,
+    mode,
     totalRecipes: data.recipes.length,
     excludedMissingPrice,
     priceUpdatedAt,
