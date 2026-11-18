@@ -20,10 +20,11 @@ npm run build
 
 ## Modes
 
+- **Best path** (`/best`) — for every recipe, compare buying all reagents against self-crafting the intermediates and keep whichever earns more **profit per hour**. A badge shows the winning path.
 - **Buy mats** (`/`) — buy every reagent from the auction house, craft, sell to a vendor.
 - **Self-craft mats** (`/self-craft`) — recursively craft intermediate reagents first. For each reagent the calculator picks whichever is cheaper: its cheapest recipe (including the cast time of every sub-craft) or buying it. Rows that only become profitable when you craft the intermediates are marked **self-craft only**.
 
-The dashboard also reports how many recipes are profitable only by self-crafting, and each expanded row compares the selected mode against the other one.
+The dashboard also reports how many recipes are profitable only by self-crafting, and each expanded row compares the selected path against the other one.
 
 ## How profit is calculated
 

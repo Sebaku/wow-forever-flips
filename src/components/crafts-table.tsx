@@ -205,13 +205,30 @@ export function CraftsTable({
                       <div className="mt-0.5 flex items-center gap-2 text-xs text-zinc-500">
                         <span className="rounded bg-zinc-800 px-1.5 py-0.5 text-zinc-300">{row.prof}</span>
                         <span>skill {row.skill}</span>
-                        {row.crafted && (
+                        {mode === "best" ? (
                           <span
-                            className="rounded bg-emerald-500/10 px-1.5 py-0.5 text-emerald-300"
-                            title="Some reagents are crafted first; the time column includes those sub-crafts"
+                            className={`rounded px-1.5 py-0.5 ${
+                              row.path === "craft"
+                                ? "bg-emerald-500/10 text-emerald-300"
+                                : "bg-sky-500/10 text-sky-300"
+                            }`}
+                            title={
+                              row.path === "craft"
+                                ? "Crafting the intermediates earns more profit per hour than buying them"
+                                : "Buying the reagents earns more profit per hour than crafting the intermediates"
+                            }
                           >
-                            craft
+                            {row.path === "craft" ? "self-craft" : "buy"}
                           </span>
+                        ) : (
+                          row.crafted && (
+                            <span
+                              className="rounded bg-emerald-500/10 px-1.5 py-0.5 text-emerald-300"
+                              title="Some reagents are crafted first; the time column includes those sub-crafts"
+                            >
+                              craft
+                            </span>
+                          )
                         )}
                         {mode === "craft" && row.profit > 0 && (row.altProfit ?? row.profit) <= 0 && (
                           <span
@@ -338,7 +355,7 @@ export function CraftsTable({
                               </p>
                               {row.altProfitPerHour !== undefined && (
                                 <p className="mt-1">
-                                  {mode === "craft" ? "Buying all mats instead" : "Self-crafting the mats instead"}: cost{" "}
+                                  {row.path === "craft" ? "Buying all mats instead" : "Self-crafting the mats instead"}: cost{" "}
                                   {formatMoney(row.altReagentCost ?? 0)} → profit{" "}
                                   <span className={profitColor(row.altProfit ?? 0)}>{formatMoney(row.altProfit ?? 0)}</span> →{" "}
                                   <span className={profitColor(row.altProfitPerHour)}>{formatCompactMoney(row.altProfitPerHour)}</span>
@@ -349,7 +366,9 @@ export function CraftsTable({
                             <p className="rounded-lg border border-zinc-800 bg-zinc-950/60 p-2 text-[11px] leading-relaxed text-zinc-500">
                               {mode === "craft"
                                 ? "Intermediates are crafted with their cheapest known recipe and their cast times and cooldowns are added to the total. Assumes those recipes are learned and craftable by the character. Reagents with no recipe are bought at the auction house (or from a verified vendor)."
-                                : "Reagent unit cost is the EU market value (or historical value). The vendor price is used only when the item has no auction data and an NPC actually sells it. Cooldown-bound crafts assume one craft per cooldown."}
+                                : mode === "best"
+                                  ? "The badge shows whether buying the reagents or self-crafting the intermediates wins on profit per hour. Self-crafting uses the cheapest recipe for each intermediate and adds every sub-craft's cast time and cooldown. Assumes those recipes are learned and craftable by the character."
+                                  : "Reagent unit cost is the EU market value (or historical value). The vendor price is used only when the item has no auction data and an NPC actually sells it. Cooldown-bound crafts assume one craft per cooldown."}
                             </p>
                           </div>
                         </div>

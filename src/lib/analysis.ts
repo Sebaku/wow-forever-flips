@@ -30,7 +30,43 @@ function craftSeconds(recipe: CraftsRecipe): number {
   return Math.max(recipe.castMs, recipe.cdMs, MIN_CRAFT_SECONDS * 1000) / 1000;
 }
 
+function isBetter(a: FlipRow, b: FlipRow): boolean {
+  if (a.profitPerHour !== b.profitPerHour) return a.profitPerHour > b.profitPerHour;
+  if (a.profit !== b.profit) return a.profit > b.profit;
+  return a.seconds < b.seconds;
+}
+
+export function combineBest(data: CraftsData, buy: Analysis, craft: Analysis): Analysis {
+  const chosen = new Map<number, FlipRow>();
+  for (const row of buy.rows) chosen.set(row.recipeId, row);
+  for (const row of craft.rows) {
+    const current = chosen.get(row.recipeId);
+    if (!current || isBetter(row, current)) chosen.set(row.recipeId, row);
+  }
+
+  const rows = [...chosen.values()].sort((a, b) => b.profitPerHour - a.profitPerHour);
+  const present = new Set(rows.map((row) => row.recipeId));
+  const excludedMissingPrice = data.recipes.filter((recipe) => {
+    const output = data.items[recipe.out];
+    return output && output.sell > 0 && !present.has(recipe.id);
+  }).length;
+
+  return {
+    rows,
+    mode: "best",
+    totalRecipes: data.recipes.length,
+    excludedMissingPrice,
+    priceUpdatedAt: buy.priceUpdatedAt ?? craft.priceUpdatedAt,
+  };
+}
+
 export function analyze(data: CraftsData, prices: Prices, mode: AnalyzeMode = "buy"): Analysis {
+  if (mode === "best") {
+    const buy = analyze(data, prices, "buy");
+    const craft = analyze(data, prices, "craft");
+    return combineBest(data, buy, craft);
+  }
+
   const rows: FlipRow[] = [];
   let excludedMissingPrice = 0;
   let priceUpdatedAt: string | null = null;
@@ -203,6 +239,7 @@ export function analyze(data: CraftsData, prices: Prices, mode: AnalyzeMode = "b
       cdMs: recipe.cdMs,
       cooldownBound: recipe.cdMs > recipe.castMs,
       crafted,
+      path: crafted ? "craft" : "buy",
       reagents,
     });
   }

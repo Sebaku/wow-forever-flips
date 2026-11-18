@@ -1,6 +1,8 @@
 export type ItemSource = "forever" | "classic" | "api" | "name-only";
 
-export type AnalyzeMode = "buy" | "craft";
+export type AnalyzeMode = "buy" | "craft" | "best";
+
+export type CraftPath = "buy" | "craft";
 
 export type CraftsItem = {
   name: string;
@@ -94,6 +96,7 @@ export type FlipRow = {
   cdMs: number;
   cooldownBound: boolean;
   crafted: boolean;
+  path: CraftPath;
   altReagentCost?: number;
   altProfit?: number;
   altProfitPerHour?: number;

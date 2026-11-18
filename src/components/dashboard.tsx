@@ -2,7 +2,7 @@ import Link from "next/link";
 import type { ReactNode } from "react";
 
 import { CraftsTable } from "@/components/crafts-table";
-import { analyze } from "@/lib/analysis";
+import { analyze, combineBest } from "@/lib/analysis";
 import { crafts } from "@/lib/crafts";
 import { formatCompactMoney, formatMoney } from "@/lib/money";
 import { getPrices } from "@/lib/prices";
@@ -37,14 +37,15 @@ function ModeLink({ href, active, children }: { href: string; active: boolean; c
 
 export async function Dashboard({ mode }: { mode: AnalyzeMode }) {
   const prices = await getPrices();
-  const analysis = analyze(crafts, prices, mode);
-  const buyAnalysis = mode === "buy" ? analysis : analyze(crafts, prices, "buy");
-  const craftAnalysis = mode === "craft" ? analysis : analyze(crafts, prices, "craft");
+  const buyAnalysis = analyze(crafts, prices, "buy");
+  const craftAnalysis = analyze(crafts, prices, "craft");
+  const analysis =
+    mode === "buy" ? buyAnalysis : mode === "craft" ? craftAnalysis : combineBest(crafts, buyAnalysis, craftAnalysis);
   const buyById = new Map(buyAnalysis.rows.map((row) => [row.recipeId, row]));
   const craftById = new Map(craftAnalysis.rows.map((row) => [row.recipeId, row]));
 
   const rows: FlipRow[] = analysis.rows.map((row) => {
-    const alt = mode === "craft" ? buyById.get(row.recipeId) : craftById.get(row.recipeId);
+    const alt = row.path === "craft" ? buyById.get(row.recipeId) : craftById.get(row.recipeId);
     return alt
       ? {
           ...row,
@@ -61,6 +62,8 @@ export async function Dashboard({ mode }: { mode: AnalyzeMode }) {
     const buy = buyById.get(row.recipeId);
     return row.profit > 0 && (!buy || buy.profit <= 0);
   });
+  const bestBuyCount = profitable.filter((row) => row.path === "buy").length;
+  const bestCraftCount = profitable.filter((row) => row.path === "craft").length;
   const best = profitable[0];
   const missingOutput = Number(crafts.stats.missingOutputItems ?? 0);
   const updated = analysis.priceUpdatedAt ? new Date(analysis.priceUpdatedAt) : null;
@@ -80,14 +83,22 @@ export async function Dashboard({ mode }: { mode: AnalyzeMode }) {
                 Buy reagents from the auction house, craft, and sell the result to a vendor. Every recipe is ranked by{" "}
                 <span className="text-zinc-200">profit per hour</span> of crafting time, so fast recipes with small margins can beat slow ones with big margins.
               </>
-            ) : (
+            ) : mode === "craft" ? (
               <>
                 Craft intermediate reagents from their cheapest recipe, then craft the final item and sell it to a vendor. The{" "}
                 <span className="text-zinc-200">total time includes every sub-craft</span>, so long chains rank lower; anything without a recipe is bought as usual.
               </>
+            ) : (
+              <>
+                Each recipe uses whichever path earns more <span className="text-zinc-200">profit per hour</span>: buying the reagents, or
+                crafting the intermediates yourself. The badge shows the winning path, and the expanded row compares it with the other one.
+              </>
             )}
           </p>
           <nav className="mt-3 inline-flex rounded-lg border border-zinc-800 bg-zinc-950/60 p-1 text-xs font-medium">
+            <ModeLink href="/best" active={mode === "best"}>
+              Best path
+            </ModeLink>
             <ModeLink href="/" active={mode === "buy"}>
               Buy mats
             </ModeLink>
@@ -129,17 +140,25 @@ export async function Dashboard({ mode }: { mode: AnalyzeMode }) {
         <StatCard
           label="Recipes priced"
           value={rows.length.toLocaleString("en-US")}
-          hint={`${analysis.excludedMissingPrice.toLocaleString("en-US")} skipped: reagent can't be ${mode === "craft" ? "bought or crafted" : "bought"}`}
+          hint={`${analysis.excludedMissingPrice.toLocaleString("en-US")} skipped: reagent can't be ${mode === "buy" ? "bought" : "bought or crafted"}`}
         />
-        <StatCard
-          label="Profitable only by self-crafting"
-          value={selfCraftOnly.length.toLocaleString("en-US")}
-          hint={
-            selfCraftOnly.length
-              ? `Lose money with bought mats · best ${selfCraftOnly[0].name}`
-              : "Every profitable recipe still works with bought mats"
-          }
-        />
+        {mode === "best" ? (
+          <StatCard
+            label="Winning path"
+            value={`${bestBuyCount} buy · ${bestCraftCount} craft`}
+            hint="Among profitable recipes; badges in the table show the winner"
+          />
+        ) : (
+          <StatCard
+            label="Profitable only by self-crafting"
+            value={selfCraftOnly.length.toLocaleString("en-US")}
+            hint={
+              selfCraftOnly.length
+                ? `Lose money with bought mats · best ${selfCraftOnly[0].name}`
+                : "Every profitable recipe still works with bought mats"
+            }
+          />
+        )}
       </div>
 
       {(missingOutput > 0 || analysis.excludedMissingPrice > 0) && (
@@ -147,7 +166,7 @@ export async function Dashboard({ mode }: { mode: AnalyzeMode }) {
           {missingOutput > 0 &&
             `${missingOutput} recipe outputs have no known vendor sell price (they are still available as intermediates). `}
           {analysis.excludedMissingPrice > 0 &&
-            `${analysis.excludedMissingPrice} recipes are excluded because a reagent can't be ${mode === "craft" ? "bought or crafted" : "bought"}.`}
+            `${analysis.excludedMissingPrice} recipes are excluded because a reagent can't be ${mode === "buy" ? "bought" : "bought or crafted"}.`}
         </p>
       )}
 
